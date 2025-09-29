@@ -1,4 +1,4 @@
-FROM apache/nifi-minifi-cpp:latest
+FROM apacheminificpp:0.99.2
 
 RUN mkdir -p /opt/minifi/minifi-current/asset/minifi-python
 RUN cp -r /opt/minifi/minifi-current/minifi-python /opt/minifi/minifi-current/asset/
