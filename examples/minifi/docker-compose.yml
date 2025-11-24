@@ -20,6 +20,26 @@ services:
     build:
       context: .
       dockerfile: agent-cpp.dockerfile
+    ports:
+      - "9937:9936"
+    networks:
+      - shared-network
+
+  cpp-agent-fast-compact:
+    build:
+      context: .
+      dockerfile: agent-cpp_fast_compact.dockerfile
+    ports:
+      - "9938:9936"
+    networks:
+      - shared-network
+
+  prometheus:
+    build:
+      context: .
+      dockerfile: prometheus.dockerfile
+    ports:
+      - "13407:9090"
     networks:
       - shared-network
 
