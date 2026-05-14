@@ -37,7 +37,7 @@ export function SerializeFlow(id: string, flow: FlowObject): string {
     for (const conn of flow.connections) {
       const src = flow.processors.find(proc => conn.source.id === proc.id)!;
       const dst = flow.processors.find(proc => conn.destination.id === proc.id)!;
-      const rels = Object.keys(conn.sourceRelationships).filter(rel => conn.sourceRelationships[rel]);
+      const rels = conn.sourceRelationships;
       result += "  - name: " + (conn.name ?? `${src.name}/${rels.join(",")}/${dst.name}`) + "\n";
       result += "    id: " + conn.id + "\n";
       result += "    source name: " + src.name + "\n";

@@ -7,6 +7,6 @@ export function AiWidget(props: {value: Component}) {
     <div className="header">
       <SparkleIcon size={20} />
     </div>
-    <div className="prompt">{props.value.properties["Prompt"]}</div>
+    <div className="prompt">{props.value.properties["Prompt"].value}</div>
   </div>
 }

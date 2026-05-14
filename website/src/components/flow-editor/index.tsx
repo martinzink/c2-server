@@ -42,6 +42,7 @@ export type ResizeDir = 'top' | 'top-left' | 'left' | 'bottom-left' | 'bottom' |
 interface FlowEditorState {
     saved: boolean,
     flow: FlowObject
+    classManifest: AgentManifest|null
     menu: { position: { x: number, y: number }, items: { name: string, on: () => void }[] } | null
     panning: boolean,
     editingComponent: Uuid | null,
@@ -69,33 +70,16 @@ function createDefaultConnection(flow: FlowObject, src: Uuid, dst: Uuid, midPoin
     x: number,
     y: number
 } | number | null): Connection {
-    const proc = flow.processors.find(proc => proc.id === src)!;
-    const rels: { [name: string]: boolean } = {};
-    if (proc) {
-        for (const rel in proc.autoterminatedRelationships) {
-            rels[rel] = false;
-        }
-        const manifest = flow.manifest.processors.find(proc_manifest => proc_manifest.type === proc.type);
-        if (manifest?.supportsDynamicRelationships) {
-            for (const prop in proc.properties) {
-                if (!manifest.propertyDescriptors || !(prop in manifest.propertyDescriptors)) {
-                    rels[prop] = false;
-                }
-            }
-        }
-    } else {
-        rels['success'] = true;
-    }
+    const proc = flow.processors.find(proc => proc.id === src);
     return {
         id: uuid.v4() as Uuid,
         name: null,
         source: {id: src, port: null},
-        sourceRelationships: rels,
+        sourceRelationships: proc ? [] : ['success'],
         destination: {id: dst, port: null},
         flowFileExpiration: "0 seconds",
         backpressureThreshold: {count: "10000", size: "10 MB"},
         swapThreshold: null,
-        errors: [],
         attributes: [],
         midPoint: midPoint ?? undefined
     }
@@ -152,7 +136,7 @@ export function FlowEditor(props: { id: string, flow: FlowObject }) {
     const [state, setState] = useState<FlowEditorState>({
         saved: true, publish: {agents: [], classes: [], targetFlow: null, modal: false, pending: false},
         flow: props.flow, panning: false, menu: null, editingComponent: null, newConnection: null, newComponent: null,
-        resizeGroup: null, movingComponent: null, newProcessGroup: null, selected: []
+        resizeGroup: null, movingComponent: null, newProcessGroup: null, selected: [], classManifest: null
     });
     const [errors, setErrors] = useState<ErrorObject[]>([]);
     const areaRef = React.useRef<HTMLDivElement>(null);
@@ -257,11 +241,85 @@ export function FlowEditor(props: { id: string, flow: FlowObject }) {
     const isSavePending = React.useRef(false);
 
     React.useEffect(() => {
+        if (!props.flow.className) return;
+        let mounted = true;
+        let fn = () => {
+            if (!mounted) return;
+            services?.agents.fetchManifestForClass(props.flow.className!).then(manifest => {
+                if (!mounted || !manifest?.hash || manifest?.hash === props.flow.manifest.hash) return;
+                setState(st => ({...st, classManifest: manifest!}));
+            })
+        };
+        fn();
+        const timer = setInterval(fn, 2000);
+        return () => {
+            mounted = false;
+            clearInterval(timer);
+        }
+    }, [props.flow.className, props.flow.manifest.hash]) 
+
+    React.useEffect(() => {
         let errors: ErrorObject[] = [];
+        const report_property_errors = (item: Component, manifest: ComponentManifest) => {
+             for (let property_key in item.properties) {
+                if (!manifest.propertyDescriptors?.[property_key] && !manifest.supportsDynamicProperties) {
+                    errors.push({
+                        component: item.id,
+                        type: "PROPERTY",
+                        target: property_key,
+                        message: `Property '${property_key}' is not supported`
+                    });
+                }
+                let is_required = manifest.propertyDescriptors?.[property_key]?.required ?? false;
+                let is_null = item.properties[property_key].value === null;
+                if (is_required && is_null) {
+                    errors.push({
+                        component: item.id,
+                        type: "PROPERTY",
+                        target: property_key,
+                        message: `Property '${property_key}' is required`
+                    });
+                }
+
+                if (item.properties[property_key].value) {
+                    const asset_pattern = /@\{asset-id:([^}]*)\}/g;
+                    const ms = item.properties[property_key].value?.matchAll?.(asset_pattern);
+                    if (ms) {
+                        for (const m of ms) {
+                            const find_asset: (entries: FlowAssetDirectory['entries'])=>boolean = (entries) => {
+                                return entries.some(entry => {
+                                    if ('entries' in entry) {
+                                        return find_asset(entry.entries);
+                                    }
+                                    return entry.id === m[1];
+                                })
+                            }
+                            if (!find_asset(state.flow.assets ?? [])) {
+                                errors.push({
+                                    component: item.id,
+                                    type: "PROPERTY",
+                                    target: property_key,
+                                    message: `No such asset '${m[1]}' id`
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
         for (let proc of state.flow.processors) {
-            const proc_manifest = state.flow.manifest.processors.find(proc_manifest => proc_manifest.type === proc.type)!;
+            const proc_manifest = state.flow.manifest.processors.find(proc_manifest => proc_manifest.type === proc.type);
+            if (!proc_manifest) {
+                errors.push({
+                    component: proc.id,
+                    type: "PROPERTY",
+                    target: "PROCESSOR-TYPE",
+                    message: `This processor type is not available`
+                });
+                continue;
+            }
             for (let rel in proc.autoterminatedRelationships) {
-                const conn = state.flow.connections.find(conn => conn.source.id === proc.id && (rel in conn.sourceRelationships) && conn.sourceRelationships[rel]);
+                const conn = state.flow.connections.find(conn => conn.source.id === proc.id && conn.sourceRelationships.includes(rel));
                 if (conn && proc.autoterminatedRelationships[rel]) {
                     errors.push({
                         component: proc.id,
@@ -275,47 +333,45 @@ export function FlowEditor(props: { id: string, flow: FlowObject }) {
                         component: proc.id,
                         type: "RELATIONSHIP",
                         target: rel,
-                        message: `Relationship '${rel}'  has to be either connected or auto-terminated`
+                        message: `Relationship '${rel}' has to be either connected or auto-terminated`
+                    });
+                }
+                if (!proc_manifest.supportsDynamicRelationships && !proc_manifest.supportedRelationships.find(sup_rel => sup_rel.name === rel)) {
+                    errors.push({
+                        component: proc.id,
+                        type: "RELATIONSHIP",
+                        target: rel,
+                        message: `Relationship '${rel}' is not supported`
                     });
                 }
             }
-            for (let property_key in proc.properties) {
-                let is_required = proc_manifest.propertyDescriptors?.[property_key].required ?? false;
-                let is_null = proc.properties[property_key] === null;
-                if (is_required && is_null) {
+            report_property_errors(proc, proc_manifest);
+        }
+        for (let service of state.flow.services) {
+            const service_manifest = state.flow.manifest.controllerServices.find(serv_manifest => serv_manifest.type === service.type);
+            if (!service_manifest) {
+                errors.push({
+                    component: service.id,
+                    type: "PROPERTY",
+                    target: "SERVICE-TYPE",
+                    message: `This service type is not available`
+                });
+                continue;
+            }
+            report_property_errors(service, service_manifest);
+        }
+        for (const conn of state.flow.connections) {
+            const src_proc = state.flow.processors.find(proc => proc.id === conn.source.id);
+            const supported_rels = src_proc ? Object.keys(src_proc.autoterminatedRelationships) : ['success'];
+            for (const rel of conn.sourceRelationships) {
+                if (!supported_rels.includes(rel)) {
                     errors.push({
-                        component: proc.id,
-                        type: "PROPERTY",
-                        target: property_key,
-                        message: `Property '${property_key}' is required`
+                        component: conn.id,
+                        type: "RELATIONSHIP",
+                        target: rel,
+                        message: `Relationship '${rel}' is not available on source`
                     });
                 }
-
-                if (proc.properties[property_key]) {
-                    const asset_pattern = /@\{asset-id:([^}]*)\}/g;
-                    const ms = proc.properties[property_key]?.matchAll?.(asset_pattern);
-                    if (ms) {
-                        for (const m of ms) {
-                            const find_asset: (entries: FlowAssetDirectory['entries'])=>boolean = (entries) => {
-                                return entries.some(entry => {
-                                    if ('entries' in entry) {
-                                        return find_asset(entry.entries);
-                                    }
-                                    return entry.id === m[1];
-                                })
-                            }
-                            if (!find_asset(state.flow.assets ?? [])) {
-                                errors.push({
-                                    component: proc.id,
-                                    type: "PROPERTY",
-                                    target: property_key,
-                                    message: `No such asset '${m[1]}' id`
-                                });
-                            }
-                        }
-                    }
-                }
-
             }
         }
         setErrors(errors);
@@ -995,7 +1051,7 @@ export function FlowEditor(props: { id: string, flow: FlowObject }) {
                         } else {
                             to = {...state.newConnection.to, w: 0, h: 0, circular: true};
                         }
-                        return <ConnectionView key={`new-connection`} from={{
+                        return <ConnectionView key={`new-connection`} supportedRel={[]} errors={[]} from={{
                             x: src.position.x + width(src) / 2,
                             y: src.position.y + height(src) / 2,
                             w: width(src) + 2 * padding,
@@ -1038,6 +1094,50 @@ export function FlowEditor(props: { id: string, flow: FlowObject }) {
                 <div className="rearrange-btn" onClick={rearrange}>
                     <span className="label">Rearrange</span>
                 </div>
+                {
+                    state.classManifest && state.flow.manifest.hash !== state.classManifest?.hash ? 
+                    <div className="upgrade-manifest-btn" onClick={() => {
+                        setState(st => {
+                            let new_processors: Processor[] = [];
+                            for (const proc of st.flow.processors) {
+                                const procManifest = st.classManifest!.processors.find(proc_manifest => proc_manifest.type === proc.type);
+                                if (!procManifest) {
+                                    // this processor is no longer supported, use as-is
+                                    new_processors.push(proc);
+                                    continue;
+                                }
+                                let autoterminatedRelationships = {...createDefaultRelationshipStatus(procManifest.supportedRelationships), ...proc.autoterminatedRelationships};
+                                let properties = createDefaultProperties(procManifest.propertyDescriptors ?? {});
+                                for (const prop_name in proc.properties) {
+                                    if (proc.properties[prop_name].type === "custom") {
+                                        properties[prop_name] = proc.properties[prop_name];
+                                    }
+                                }
+                                new_processors.push({...proc, properties, autoterminatedRelationships});
+                            }
+                            let new_services: MiNiFiService[] = [];
+                            for (const service of st.flow.services) {
+                                const service_manifest = st.classManifest!.controllerServices.find(serv_manifest => serv_manifest.type === service.type);
+                                if (!service_manifest) {
+                                    // this service is no longer supported, use as-is
+                                    new_services.push(service);
+                                    continue;
+                                }
+                                let properties = createDefaultProperties(service_manifest.propertyDescriptors ?? {});
+                                for (const prop_name in service.properties) {
+                                    if (service.properties[prop_name].type === "custom") {
+                                        properties[prop_name] = service.properties[prop_name];
+                                    }
+                                }
+                                new_services.push({...service, properties});
+                            }
+                            return {...st, flow: {...st.flow, processors: new_processors, services: new_services, manifest: st.classManifest!}}
+                        });
+                        notif.emit('Manifest successfully upgraded', 'success');
+                    }}>
+                        <span className="label">Upgrade manifest</span>
+                    </div> : null
+                }
             </div>
             {
                 !state.publish.modal ? null :
@@ -1062,7 +1162,9 @@ export function FlowEditor(props: { id: string, flow: FlowObject }) {
                             (() => {
                                 const conn = state.flow.connections.find(conn => conn.id === state.editingComponent);
                                 if (conn) {
-                                    return <ConnectionEditor model={conn}/>;
+                                    const src_proc = state.flow.processors.find(proc => proc.id === conn.source.id);
+                                    const supported_rels = src_proc ? Object.keys(src_proc.autoterminatedRelationships) : ['success'];
+                                    return <ConnectionEditor model={conn} supportedRels={supported_rels} errors={errors.filter(err => err.component === conn.id)} />;
                                 }
                                 const proc = state.flow.processors.find(proc => proc.id === state.editingComponent);
                                 if (proc) {
@@ -1241,7 +1343,10 @@ export function emitProcessGroupItems(state: {
             } else {
                 return null;
             }
+            const src_proc = state.flow.processors.find(proc => proc.id === conn.source.id);
+            const supported_rels = src_proc ? Object.keys(src_proc.autoterminatedRelationships) : ['success'];
             return <ConnectionView model={conn} key={conn.id} id={conn.id}
+                                   supportedRel={supported_rels}
                                    from={{
                                        x: srcProc.position.x + width(srcProc) / 2,
                                        y: srcProc.position.y + height(srcProc) / 2,
@@ -1256,9 +1361,10 @@ export function emitProcessGroupItems(state: {
                                        h: height(dstProc) + 2 * padding,
                                        circular: dstProc.size?.circular ?? true
                                    }}
+                                   errors={errors.filter(err => err.component === conn.id)}
                                    container={conn_container}
                                    selected={state.selected.includes(srcProc.id) && state.selected.includes(dstProc.id)}
-                                   name={conn.name ? conn.name : Object.keys(conn.sourceRelationships).filter(key => conn.sourceRelationships[key]).sort().join(", ")}/>
+                                   name={conn.name ? conn.name : conn.sourceRelationships.sort().join(", ")}/>
         })
     ]
 }
@@ -1794,35 +1900,7 @@ function useFlowContext(areaRef: React.RefObject<HTMLDivElement | null>, state: 
             const updated = fn(curr);
             const new_procs = st.flow.processors.filter(proc => proc.id !== updated.id);
             new_procs.push(updated);
-            let changed_any = false;
-            let connections = st.flow.connections;
-            const manifest = st.flow.manifest.processors.find(man => man.type === updated.type);
-            if (manifest?.supportsDynamicRelationships) {
-                connections = st.flow.connections.map(out => {
-                    if (out.source.id !== updated.id) return out;
-                    let changed = false;
-                    const newSourceRelationships: { [name: string]: boolean } = {};
-                    for (const rel in out.sourceRelationships) {
-                        if (rel in updated.autoterminatedRelationships) {
-                            newSourceRelationships[rel] = out.sourceRelationships[rel];
-                            continue;
-                        }
-                        // relationship removed
-                        changed = true;
-                    }
-                    for (const rel in updated.autoterminatedRelationships) {
-                        if (rel in newSourceRelationships) continue;
-                        // new relationship
-                        newSourceRelationships[rel] = false;
-                        changed = true;
-                    }
-                    if (!changed) return out;
-                    changed_any = true;
-                    return {...out, sourceRelationships: newSourceRelationships};
-                });
-            }
-            if (!changed_any) connections = st.flow.connections;
-            return {...st, flow: {...st.flow, processors: new_procs, connections}}
+            return {...st, flow: {...st.flow, processors: new_procs}}
         })
     }, []);
 
@@ -1925,22 +2003,22 @@ function useFlowContext(areaRef: React.RefObject<HTMLDivElement | null>, state: 
     //   if (flow !== state.flow) setState(curr => ({...curr, flow}));
     // }, [state.flow.connections, state.flow.processors]);
 
-    const closeNewProcessor = React.useCallback((id: string | null) => {
+    const closeNewProcessor = React.useCallback((type: string | null) => {
         setState(st => {
             if (!st.newComponent) return st;
-            if (id === null) {
+            if (type === null) {
                 return {...st, newComponent: null, newConnection: null};
             }
-            const procManifest = st.flow.manifest.processors.find(proc => proc.type === id);
+            const procManifest = st.flow.manifest.processors.find(proc => proc.type === type);
             if (!procManifest) {
                 return {...st, newComponent: null, newConnection: null};
             }
-            const name = getUnqualifiedName(id);
+            const name = getUnqualifiedName(type);
             const newProcessor: Processor = {
                 position: {x: st.newComponent.x, y: st.newComponent.y},
                 id: uuid.v4() as Uuid,
                 name: name,
-                type: id,
+                type: type,
                 penalty: mapDefined(st.flow.manifest.schedulingDefaults.penalizationPeriodMillis, val => `${val} ms`, ""),
                 yield: mapDefined(st.flow.manifest.schedulingDefaults.yieldDurationMillis, val => `${val} ms`, ""),
                 autoterminatedRelationships: createDefaultRelationshipStatus(procManifest.supportedRelationships),
@@ -2030,12 +2108,12 @@ function createDefaultRelationshipStatus(rels: { name: string }[]): { [name: str
     return result;
 }
 
-function createDefaultProperties(props: { [name: string]: PropertyDescriptor }): { [name: string]: string | null } {
+function createDefaultProperties(props: { [name: string]: PropertyDescriptor }): { [name: string]: PropertyValue } {
     console.log(props);
-    const result: { [name: string]: string | null } = {};
+    const result: { [name: string]: PropertyValue } = {};
     for (const name in props) {
         const prop = props[name];
-        result[name] = prop.defaultValue ?? null;
+        result[name] = {value: prop.defaultValue ?? null, type: "default"};
     }
     return result;
 }
@@ -2045,63 +2123,63 @@ function mapDefined<T, R>(value: T | undefined, fn: (val: T) => R, fallback: R):
     return fn(value);
 }
 
-function PropagateAttributes(flow: FlowObject): FlowObject {
-    const errors = new Map<Connection, string[]>();
-    const attributes = new Map<Connection, string[]>();
-    const visited = new Set<Processor>();
-    for (const proc of flow.processors) {
-        VerifyProcessor(flow, proc, visited, attributes, errors);
-    }
-    let changed = false;
-    const connections = flow.connections.map(conn => {
-        const new_errors = errors.get(conn) ?? [];
-        if (new_errors.length !== conn.errors.length || new_errors.some((err, idx) => err !== conn.errors[idx])) {
-            changed = true;
-        }
-        const attr = attributes.get(conn) ?? [];
-        if (attr.length !== conn.attributes.length || attr.some((a, idx) => a !== conn.attributes[idx])) {
-            changed = true;
-        }
-        return {...conn, attributes: attr, errors: new_errors};
-    });
-    if (!changed) return flow;
-    return {...flow, connections};
-}
+// function PropagateAttributes(flow: FlowObject): FlowObject {
+//     const errors = new Map<Connection, string[]>();
+//     const attributes = new Map<Connection, string[]>();
+//     const visited = new Set<Processor>();
+//     for (const proc of flow.processors) {
+//         VerifyProcessor(flow, proc, visited, attributes, errors);
+//     }
+//     let changed = false;
+//     const connections = flow.connections.map(conn => {
+//         const new_errors = errors.get(conn) ?? [];
+//         if (new_errors.length !== conn.errors.length || new_errors.some((err, idx) => err !== conn.errors[idx])) {
+//             changed = true;
+//         }
+//         const attr = attributes.get(conn) ?? [];
+//         if (attr.length !== conn.attributes.length || attr.some((a, idx) => a !== conn.attributes[idx])) {
+//             changed = true;
+//         }
+//         return {...conn, attributes: attr, errors: new_errors};
+//     });
+//     if (!changed) return flow;
+//     return {...flow, connections};
+// }
 
-function VerifyProcessor(flow: FlowObject, target: Processor, visited: Set<Processor>, attributes: Map<Connection, string[]>, errors: Map<Connection, string[]>) {
-    if (visited.has(target)) return;
-    visited.add(target);
-    const incoming = flow.connections.filter(conn => conn.destination.id === target.id);
-    for (const conn of incoming) {
-        const src = flow.processors.find(proc => proc.id === conn.source.id)!;
-        VerifyProcessor(flow, src, visited, attributes, errors);
-    }
-    const manifest = flow.manifest.processors.find(proc => proc.type === target.type);
-    if (!manifest) return;
-    if (manifest.inputAttributeRequirements) {
-        for (const req of manifest.inputAttributeRequirements) {
-            if (Eval(target, req.condition!)) {
-                for (const attr of GetAttributeCandidates(target, manifest, null, req)) {
-                    for (const conn of incoming) {
-                        if (!(attributes.get(conn)?.includes(attr))) {
-                            let err = errors.get(conn);
-                            if (!err) errors.set(conn, err = []);
-                            err.push(`Destination processor expects '${attr}' attribute`);
-                        }
-                    }
-                }
-            }
-        }
-    }
-    const outgoing = flow.connections.filter(conn => conn.source.id === target.id);
-    const input_attributes = Intersect(incoming.map(conn => attributes.get(conn) ?? [])) ?? [];
-    for (const conn of outgoing) {
-        const attrs = Intersect(Object.keys(conn.sourceRelationships).filter(rel_name => conn.sourceRelationships[rel_name]).map(rel_name => {
-            return DetermineOutputAttributes(target, manifest, input_attributes, rel_name);
-        }));
-        attributes.set(conn, attrs);
-    }
-}
+// function VerifyProcessor(flow: FlowObject, target: Processor, visited: Set<Processor>, attributes: Map<Connection, string[]>, errors: Map<Connection, string[]>) {
+//     if (visited.has(target)) return;
+//     visited.add(target);
+//     const incoming = flow.connections.filter(conn => conn.destination.id === target.id);
+//     for (const conn of incoming) {
+//         const src = flow.processors.find(proc => proc.id === conn.source.id)!;
+//         VerifyProcessor(flow, src, visited, attributes, errors);
+//     }
+//     const manifest = flow.manifest.processors.find(proc => proc.type === target.type);
+//     if (!manifest) return;
+//     if (manifest.inputAttributeRequirements) {
+//         for (const req of manifest.inputAttributeRequirements) {
+//             if (Eval(target, req.condition!)) {
+//                 for (const attr of GetAttributeCandidates(target, manifest, null, req)) {
+//                     for (const conn of incoming) {
+//                         if (!(attributes.get(conn)?.includes(attr))) {
+//                             let err = errors.get(conn);
+//                             if (!err) errors.set(conn, err = []);
+//                             err.push(`Destination processor expects '${attr}' attribute`);
+//                         }
+//                     }
+//                 }
+//             }
+//         }
+//     }
+//     const outgoing = flow.connections.filter(conn => conn.source.id === target.id);
+//     const input_attributes = Intersect(incoming.map(conn => attributes.get(conn) ?? [])) ?? [];
+//     for (const conn of outgoing) {
+//         const attrs = Intersect(Object.keys(conn.sourceRelationships).filter(rel_name => conn.sourceRelationships[rel_name]).map(rel_name => {
+//             return DetermineOutputAttributes(target, manifest, input_attributes, rel_name);
+//         }));
+//         attributes.set(conn, attrs);
+//     }
+// }
 
 function DetermineOutputAttributes(processor: Processor, manifest: ProcessorManifest, input_attrs: string[], rel_name: string): string[] {
     const rel = manifest.supportedRelationships.find(rel => rel.name === rel_name);
@@ -2144,7 +2222,7 @@ function GetAttributeCandidates(processor: Processor, manifest: ProcessorManifes
             }
         }
     } else if (desc.source === "Property") {
-        const val = processor.properties[desc.value];
+        const val = processor.properties[desc.value].value;
         if (val) output = [val];
     } else {
         output = [...desc.source];

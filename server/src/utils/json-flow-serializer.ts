@@ -108,7 +108,7 @@ function serializeProcessGroup(id: Uuid | null, flow: FlowObject): object {
         }).map(conn => {
             const src = findComponent(flow, conn.source.id)!;
             const dst = findComponent(flow, conn.destination.id)!;
-            const rels = Object.keys(conn.sourceRelationships).filter(rel => conn.sourceRelationships[rel]);
+            const rels = conn.sourceRelationships;
             return {
                 "position": {
                     "x": typeof conn.midPoint === "number" ? conn.midPoint : (conn.midPoint?.x ?? 0.0),
@@ -159,11 +159,11 @@ function findComponent(flow: FlowObject, id: Uuid): Component | undefined | null
         flow.funnels.find(val => val.id === id);
 }
 
-function filterNullish(obj: { [key: string]: string | null }): { [key: string]: string } {
+function filterNullish(obj: { [key: string]: PropertyValue }): { [key: string]: string } {
     let result: { [key: string]: string } = {};
     for (let key in obj) {
-        if (isNullish(obj[key])) continue;
-        result[key] = obj[key]!;
+        if (isNullish(obj[key].value)) continue;
+        result[key] = obj[key].value;
     }
     return result;
 }
@@ -268,7 +268,6 @@ function deserializeProcessGroup(flow_object: FlowObject, group_id: Uuid | null,
             flow_object.connections = flow_object.connections.concat(process_group_json.connections.map((conn: any) => ({
                 id: conn.identifier,
                 name: conn.name,
-                errors: [],
                 attributes: [],
                 source: {
                     id: conn.source.id,
@@ -362,7 +361,7 @@ function fixFlowObject(flow_object: FlowObject) {
         if (processor_manifest && processor_manifest.propertyDescriptors) {
             for (let property_name in processor_manifest.propertyDescriptors) {
                 if (!(property_name in processor.properties)) {
-                    processor.properties[property_name] = null;
+                    processor.properties[property_name].value = null;
                 }
             }
         }
@@ -379,22 +378,12 @@ function fixFlowObject(flow_object: FlowObject) {
         if (service_manifest && service_manifest.propertyDescriptors) {
             for (let property_name in service_manifest.propertyDescriptors) {
                 if (!(property_name in service.properties)) {
-                    service.properties[property_name] = null;
+                    service.properties[property_name].value = null;
                 }
             }
         }
     }
     for (let connection of flow_object.connections) {
-        const source_processor = flow_object.processors.find(processor => processor.id === connection.source.id);
-        if (source_processor) {
-            const source_manifest = flow_object.manifest.processors.find(processor_manifest => processor_manifest.type === source_processor.type);
-            if (source_manifest) {
-                for (let relationship of source_manifest.supportedRelationships) {
-                    if (!(relationship.name in connection.sourceRelationships)) {
-                        connection.sourceRelationships[relationship.name] = false;
-                    }
-                }
-            }
-        }
+        connection.sourceRelationships = []
     }
 }

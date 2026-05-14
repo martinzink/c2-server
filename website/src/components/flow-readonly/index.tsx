@@ -369,7 +369,7 @@ export function FlowReadonlyEditor(props: {id: string, flow: FlowObject, agentId
     for (let proc of state.flow.processors) {
       const proc_manifest = state.flow.manifest.processors.find(proc_manifest => proc_manifest.type === proc.type)!;
       for (let rel in proc.autoterminatedRelationships) {
-        const conn = state.flow.connections.find(conn => conn.source.id === proc.id && (rel in conn.sourceRelationships) && conn.sourceRelationships[rel]);
+        const conn = state.flow.connections.find(conn => conn.source.id === proc.id && conn.sourceRelationships.includes(rel));
         if (conn && proc.autoterminatedRelationships[rel]) {
           errors.push({component: proc.id, type: "RELATIONSHIP", target: rel, message: `Relationship '${rel}' is both connected and auto-terminated`});
         }
@@ -473,7 +473,9 @@ export function FlowReadonlyEditor(props: {id: string, flow: FlowObject, agentId
             (()=>{
               const conn = state.flow.connections.find(conn => conn.id === state.editingComponent);
               if (conn) {
-                return <ConnectionEditor model={conn}/>;
+                const src_proc = state.flow.processors.find(proc => proc.id === conn.source.id);
+                const supported_rels = src_proc ? Object.keys(src_proc.autoterminatedRelationships) : ['success'];
+                return <ConnectionEditor model={conn} supportedRels={supported_rels} errors={errors.filter(err => err.component === conn.id)} />;
               }
               const proc = state.flow.processors.find(proc => proc.id === state.editingComponent);
               if (proc) {

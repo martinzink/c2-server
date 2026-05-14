@@ -12,7 +12,7 @@ export function ExtendedWidget(props: {value: Component}) {
       props.value.visibleProperties!.map(property => {
         return <div key={property} className="extended-property">
           <div className="extended-property-name">{property}</div>
-          <div className="extended-property-value">{`${props.value.properties[property]}`}</div>
+          <div className="extended-property-value">{`${props.value.properties[property].value}`}</div>
         </div>
       })
     }

@@ -24,7 +24,7 @@ export function ServiceEditor(props: {model: MiNiFiService, manifest: Controller
         notif.emit(`Property '${prop}' already exists`, "error");
         return curr;
       }
-      return {...curr, properties: {...curr.properties, [prop]: ""}}
+      return {...curr, properties: {...curr.properties, [prop]: {value: "", type: "custom"}}}
     });
   }, []);
   const openModalCb = React.useCallback(()=>{
@@ -56,9 +56,9 @@ export function ServiceEditor(props: {model: MiNiFiService, manifest: Controller
             }
             const values = props.manifest.propertyDescriptors[prop_name].allowableValues;
             if (values) {
-              return <Dropdown key={prop_name} name={prop_name} width="100%" items={values.map(val => val.value)} initial={model.properties[prop_name]} onChange={flow_context?.editable ? val=>setModel(curr => ({...curr, properties: {...curr.properties, [prop_name]: val}})) : undefined}/>
+              return <Dropdown key={prop_name} name={prop_name} width="100%" items={values.map(val => val.value)} initial={model.properties[prop_name].value} onChange={flow_context?.editable ? val=>setModel(curr => ({...curr, properties: {...curr.properties, [prop_name]: {value: val, type: "custom"}}})) : undefined}/>
             }
-            return <InputField key={prop_name} name={prop_name} width="100%" default={model.properties[prop_name]} onChange={flow_context?.editable ? val=>setModel(curr => ({...curr, properties: {...curr.properties, [prop_name]: val}})) : undefined}/>
+            return <InputField key={prop_name} name={prop_name} width="100%" default={model.properties[prop_name].value} onChange={flow_context?.editable ? val=>setModel(curr => ({...curr, properties: {...curr.properties, [prop_name]: {value: val, type: "custom"}}})) : undefined}/>
           })
         }
       </div>
@@ -79,7 +79,7 @@ export function ServiceEditor(props: {model: MiNiFiService, manifest: Controller
               // not dynamic property
               return null;
             }
-            return <InputField key={prop_name} name={prop_name} width="100%" default={model.properties[prop_name]} onChange={flow_context?.editable ? val=>setModel(curr => ({...curr, properties: {...curr.properties, [prop_name]: val}})) : undefined}/>
+            return <InputField key={prop_name} name={prop_name} width="100%" default={model.properties[prop_name].value} onChange={flow_context?.editable ? val=>setModel(curr => ({...curr, properties: {...curr.properties, [prop_name]: {value: val, type: "custom"}}})) : undefined}/>
           })
         }
       </div>

@@ -16,6 +16,9 @@
     border-radius: 3px;
     outline: none;
     background-color: var(--bg-color);
+    &:focus {
+      border-color: var(--highlight-blue);
+    }
   }
   .ok {
     align-self: flex-end;

@@ -1,7 +1,7 @@
 export function Eval(ctx: Processor, expr: AttributeExpression): string|null|boolean {
   switch (expr.kind) {
     case "Literal": return expr.value;
-    case "Property": return ctx.properties[expr.value] ?? null;
+    case "Property": return ctx.properties[expr.value]?.value ?? null;
     case "Equals": return Eval(ctx, expr.arguments[0]) === Eval(ctx, expr.arguments[1]);
     case "Or": return AsBool(Eval(ctx, expr.arguments[0])) || AsBool(Eval(ctx, expr.arguments[1]));
     case "And": return AsBool(Eval(ctx, expr.arguments[0])) && AsBool(Eval(ctx, expr.arguments[1]));

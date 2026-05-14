@@ -80,7 +80,7 @@ export function ProcessorEditor(props: {model: Processor, manifest: ProcessorMan
         notif.emit(`Property '${prop}' already exists`, "error");
         return curr;
       }
-      return {...curr, properties: {...curr.properties, [prop]: ""}}
+      return {...curr, properties: {...curr.properties, [prop]: {value: "", type: "custom"}}}
     });
   }, []);
   const onNewDynamicRelationship = React.useCallback((rel: string) => {
@@ -234,11 +234,28 @@ export function ProcessorEditor(props: {model: Processor, manifest: ProcessorMan
           <div className="section-title">Properties</div>
           {
             Object.keys(model.properties).sort().map(prop_name => {
-              if (!props.manifest.propertyDescriptors || !(prop_name in props.manifest.propertyDescriptors)) {
-                // dynamic property
-                return null;
-              }
               let err = props.errors.find(err => err.type === "PROPERTY" && err.target === prop_name);
+              if (!props.manifest.propertyDescriptors || !(prop_name in props.manifest.propertyDescriptors)) {
+                if (props.manifest.supportsDynamicProperties) {
+                  // dynamic property
+                  return null;
+                }
+                return <div className="non-existent-property">
+                  <PropertyField key={prop_name} name={prop_name} width="100%" default={model.properties[prop_name].value} visible={model.visibleProperties?.includes(prop_name) ?? false} onChangeVisibility={onChangeVisibility} error={err?.message} />
+                  <Fill/>
+                  {
+                    flow_context?.editable ?
+                    <DeleteIcon size={24} onClick={() => {
+                      setModel(model => {
+                        let new_props = {...model.properties};
+                        delete new_props[prop_name];
+                        return {...model, properties: new_props, visibleProperties: model.visibleProperties?.filter(vis_prop => vis_prop in new_props)};
+                      })
+                    }}/>
+                    : null
+                  }
+                </div>
+              }
 
               if (isSpecialInputField(props.model.type, prop_name)) {
                 return null;
@@ -248,10 +265,10 @@ export function ProcessorEditor(props: {model: Processor, manifest: ProcessorMan
                 if (values) {
                   return <PropertyDropdown key={prop_name} name={prop_name} width="100%"
                                            items={values.map(val => val.value)}
-                                           initial={model.properties[prop_name]}
+                                           initial={model.properties[prop_name].value}
                                            onChange={flow_context?.editable ? val => setModel(curr => ({
                                              ...curr,
-                                             properties: {...curr.properties, [prop_name]: val}
+                                             properties: {...curr.properties, [prop_name]: {value: val, type: "custom"}}
                                            })) : undefined}
                                            visible={model.visibleProperties?.includes(prop_name) ?? false}
                                            onChangeVisibility={onChangeVisibility} error={err?.message}/>
@@ -274,10 +291,10 @@ export function ProcessorEditor(props: {model: Processor, manifest: ProcessorMan
                   if (values.length > 0) {
                     return <PropertyDropdown key={prop_name} name={prop_name} width="100%"
                                              items={values}
-                                             initial={model.properties[prop_name]}
+                                             initial={model.properties[prop_name].value}
                                              onChange={flow_context?.editable ? val => setModel(curr => ({
                                                ...curr,
-                                               properties: {...curr.properties, [prop_name]: val}
+                                               properties: {...curr.properties, [prop_name]: {value: val, type: "custom"}}
                                              })) : undefined}
                                              visible={model.visibleProperties?.includes(prop_name) ?? false}
                                              onChangeVisibility={onChangeVisibility} error={err?.message}/>
@@ -285,8 +302,8 @@ export function ProcessorEditor(props: {model: Processor, manifest: ProcessorMan
                 }
               }
 
-              return <PropertyField key={prop_name} name={prop_name} width="100%" default={model.properties[prop_name]}
-                  onChange={flow_context?.editable ? val=>setModel(curr => ({...curr, properties: {...curr.properties, [prop_name]: val}})) : undefined} visible={model.visibleProperties?.includes(prop_name) ?? false} onChangeVisibility={onChangeVisibility} error={err?.message}/>
+              return <PropertyField key={prop_name} name={prop_name} width="100%" default={model.properties[prop_name].value}
+                  onChange={flow_context?.editable ? val=>setModel(curr => ({...curr, properties: {...curr.properties, [prop_name]: {value: val, type: "custom"}}})) : undefined} visible={model.visibleProperties?.includes(prop_name) ?? false} onChangeVisibility={onChangeVisibility} error={err?.message}/>
             })
           }
         </div>
@@ -308,7 +325,7 @@ export function ProcessorEditor(props: {model: Processor, manifest: ProcessorMan
                 return null;
               }
               return <div className="dynamic-property">
-                <PropertyField key={prop_name} name={prop_name} width="100%" default={model.properties[prop_name]} onChange={flow_context?.editable ? val=>setModel(curr => ({...curr, properties: {...curr.properties, [prop_name]: val}})) : undefined}/>
+                <PropertyField key={prop_name} name={prop_name} width="100%" default={model.properties[prop_name].value} onChange={flow_context?.editable ? val=>setModel(curr => ({...curr, properties: {...curr.properties, [prop_name]: {value: val, type: "custom"}}})) : undefined}/>
                 <Fill/>
                 {
                   flow_context?.editable ?
@@ -316,7 +333,7 @@ export function ProcessorEditor(props: {model: Processor, manifest: ProcessorMan
                     setModel(model => {
                       let new_props = {...model.properties};
                       delete new_props[prop_name];
-                      return {...model, properties: new_props};
+                      return {...model, properties: new_props, visibleProperties: model.visibleProperties?.filter(vis_prop => vis_prop in new_props)};
                     })
                   }}/>
                   : null
@@ -331,8 +348,8 @@ export function ProcessorEditor(props: {model: Processor, manifest: ProcessorMan
             if (!isSpecialInputField(props.model.type, prop_name)) {
               return null;
             }
-            return <SpecialInputField key={prop_name} name={prop_name} width="100%" default={model.properties[prop_name]}
-                onChange={flow_context?.editable ? val=>setModel(curr => ({...curr, properties: {...curr.properties, [prop_name]: val}})) : undefined} visible={model.visibleProperties?.includes(prop_name) ?? false} onChangeVisibility={onChangeVisibility}/>
+            return <SpecialInputField key={prop_name} name={prop_name} width="100%" default={model.properties[prop_name].value}
+                onChange={flow_context?.editable ? val=>setModel(curr => ({...curr, properties: {...curr.properties, [prop_name]: {value: val, type: "custom"}}})) : undefined} visible={model.visibleProperties?.includes(prop_name) ?? false} onChangeVisibility={onChangeVisibility}/>
           })
         }
       </div>

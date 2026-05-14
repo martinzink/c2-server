@@ -12,11 +12,11 @@ export function IsInside(area: {x: number, y: number, w: number, h: number, circ
   return area.x - area.w/2 <= x && x <= area.x + area.w/2 && area.y - area.h/2 <= y && y <= area.y + area.h/2;
 }
 
-export function ConnectionView(props: {model?: Connection, id?: Uuid,
+export function ConnectionView(props: {model?: Connection, id?: Uuid, supportedRel: string[],
       from: {x: number, y: number, w: number, h: number, circular: boolean},
       to: {x: number, y: number, w: number, h: number, circular: boolean}, name?: string,
       midPoint?: {x: number, y: number}|number, readonly?: boolean, container?: Positionable|null,
-      selected?: boolean}) {
+      selected?: boolean, errors: ErrorObject[]}) {
   const midPoint = props.model?.midPoint ?? props.midPoint;
   
   let v_x = props.to.x - props.from.x;
@@ -196,7 +196,7 @@ export function ConnectionView(props: {model?: Connection, id?: Uuid,
     </svg>
     {
       props.id === undefined ? null :
-      <ConnectionName id={props.id} model={props.model!} x={name_pos.x - (left - 500)} y={name_pos.y - (top - 500)} name={props.name} />
+      <ConnectionName id={props.id} model={props.model!} supportedRels={props.supportedRel} x={name_pos.x - (left - 500)} y={name_pos.y - (top - 500)} name={props.name} errors={props.errors} />
     }
   </div>
   </div>
@@ -224,7 +224,7 @@ const usage_colors = [
   {bg: "#CD0000", color: "#ffffff"}, 
 ]
 
-function ConnectionName(props: {id: Uuid, model: Connection, x: number, y: number, name?: string}) {
+function ConnectionName(props: {id: Uuid, model: Connection, supportedRels: string[], x: number, y: number, name?: string, errors: ErrorObject[]}) {
   const [inline_rels, setInlineRels] = React.useState(false);
   const flow_context = React.useContext(FlowContext);
   const view_ref = React.useRef<HTMLDivElement>(null);
@@ -275,10 +275,16 @@ function ConnectionName(props: {id: Uuid, model: Connection, x: number, y: numbe
 
   return <div ref={view_ref} className="name popout" style={{left: `${props.x}px`, top: `${props.y}px`}} onContextMenu={oncontextmenu} onMouseDown={onmousedown} onDoubleClick={ondblclick} onClick={onclick}>
     {props.name ? props.name : "<unspecified>"}
-    {props.model?.errors.length !== 0 ? <ConnectionErrorBadge/> : null}
+    {props.errors.length !== 0 ? <ConnectionErrorBadge/> : null}
     <div ref={inline_rel_ref} className={`inline-relationship-picker popout ${inline_rels ? 'active': ''}`} tabIndex={-1} onBlur={onblur}>
-      {Object.keys(props.model.sourceRelationships).map(rel => {
-        return <Toggle key={rel} marginBottom="10px" name={rel} initial={props.model.sourceRelationships[rel]} onChange={val => flow_context!.updateConnection(props.model.id, curr => ({...curr, sourceRelationships: {...curr.sourceRelationships, [rel]: val}}))} />
+      {[...new Set([...props.supportedRels, ...props.model.sourceRelationships])].map(rel => {
+        return <Toggle key={rel} marginBottom="10px" name={rel} error={props.errors.find(err => err.target === rel)?.message} initial={props.model.sourceRelationships.includes(rel)} 
+          onChange={val => flow_context!.updateConnection(props.model.id, curr => {
+            if (curr.sourceRelationships.includes(rel)) {
+              return {...curr, sourceRelationships: curr.sourceRelationships.filter(curr_rel => curr_rel !== rel)}
+            }
+            return {...curr, sourceRelationships: [...curr.sourceRelationships, rel]}
+          })} />
       })}
     </div>
     {props.model.size ? 

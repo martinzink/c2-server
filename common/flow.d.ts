@@ -112,11 +112,16 @@ interface ImportState {
   classes: string[]
 }
 
+type PropertyValue = {
+  value: string|null,
+  type: "default"|"custom"
+}
+
 interface Component extends Positionable {
   id: Uuid,
   type: string,
   name: string,
-  properties: {[name: string]: string|null}
+  properties: {[name: string]: PropertyValue}
   visibleProperties?: string[]
   running?: ComponentState
   parentGroup?: Uuid|null
@@ -194,10 +199,9 @@ interface ConnectionSize {
 interface Connection {
   id: Uuid,
   name: string|null,
-  errors: string[],
   attributes: string[],
   source: {id: Uuid, port: string|null},
-  sourceRelationships: {[name: string]: boolean},
+  sourceRelationships: string[],
   destination: {id: Uuid, port: string|null},
   flowFileExpiration: string,
   swapThreshold: string|null,

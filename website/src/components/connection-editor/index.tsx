@@ -5,7 +5,7 @@ import { InputField } from "../component-editor-input";
 import { Toggle } from "../component-editor-toggle";
 import "./index.scss"
 
-export function ConnectionEditor(props: {model: Connection, readonly?: boolean}) {
+export function ConnectionEditor(props: {model: Connection, supportedRels: string[], readonly?: boolean, errors: ErrorObject[]}) {
   const flow_context = useContext(FlowContext);
   const setModel = React.useMemo(()=>{
     return (fn: (curr: Connection)=>Connection) => flow_context!.updateConnection(props.model.id, fn);
@@ -24,7 +24,7 @@ export function ConnectionEditor(props: {model: Connection, readonly?: boolean})
     <div className="component-content">
       <div className="section">
         <div className="section-title">General</div>
-        {props.model.errors.map(err => <div key={err} className="connection-error">{err}</div>)}
+        {props.errors.map(err => <div key={err.message} className="connection-error">{err.message}</div>)}
         <InputField name="NAME" width="100%" default={props.model.name} onChange={flow_context?.editable ? val=>setModel(curr => ({...curr, name: val})) : undefined}/>
         <InputField name="FLOWFILE EXPIRATION" width="100%" default={props.model.flowFileExpiration} onChange={flow_context?.editable ? val=>setModel(curr => ({...curr, flowFileExpiration: val})) : undefined}/>
         <InputField name="BACK PRESSURE COUNT THRESHOLD" width="100%" default={props.model.backpressureThreshold.count} onChange={flow_context?.editable ? val => setModel(curr => ({...curr, backpressureThreshold: {...curr.backpressureThreshold, count: val}})) : undefined}/>
@@ -33,11 +33,16 @@ export function ConnectionEditor(props: {model: Connection, readonly?: boolean})
       </div>
       <div className="section">
         <div className="section-title">Source relationships</div>
-        {
-          Object.keys(props.model.sourceRelationships).sort().map(rel=>{
-            return <Toggle key={rel} marginBottom="10px" name={rel} initial={props.model.sourceRelationships[rel]} onChange={flow_context?.editable ? val => setModel(curr => ({...curr, sourceRelationships: {...curr.sourceRelationships, [rel]: val}})) : undefined} />
-          })
-        }
+        {[...new Set([...props.supportedRels, ...props.model.sourceRelationships])].map(rel => {
+          return <Toggle key={rel} marginBottom="10px" name={rel} error={props.errors.find(err => err.target === rel)?.message}
+            initial={props.model.sourceRelationships.includes(rel)} 
+            onChange={flow_context?.editable ? val => setModel(curr => {
+              if (curr.sourceRelationships.includes(rel)) {
+                return {...curr, sourceRelationships: curr.sourceRelationships.filter(curr_rel => curr_rel !== rel)}
+              }
+              return {...curr, sourceRelationships: [...curr.sourceRelationships, rel]}
+            }) : undefined} />
+        })}
       </div>
       <div className="section">
         <div className="section-title">Flow File Attributes</div>
